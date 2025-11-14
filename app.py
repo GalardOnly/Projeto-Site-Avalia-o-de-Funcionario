@@ -190,45 +190,64 @@ def processar_folha_ponto(arquivo_carregado):
         st.error(f"Erro no processamento: {str(e)}")
         raise
 
+# ... (código anterior do processamento)
+
 # Interface Streamlit
 st.set_page_config(layout="wide", page_title="Calculadora de Ponto", page_icon="⏰")
 
-# Substituir o título simples por algo mais visual
+# CSS personalizado para o tema verde, branco e preto
 st.markdown("""
-<div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            padding: 2rem; 
-            border-radius: 10px; 
-            text-align: center;
-            color: white;
-            margin-bottom: 2rem;'>
-    <h1 style='margin:0;'>⏰ Controle de Ponto Automático</h1>
-    <p style='margin:0; opacity: 0.9;'>Sistema inteligente de gestão de horários</p>
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #00C853 0%, #009624 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        text-align: center;
+        color: white;
+        margin-bottom: 2rem;
+    }
+    .positive-card {
+        background-color: #E8F5E8;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 5px solid #00C853;
+        border: 1px solid #C8E6C9;
+    }
+    .negative-card {
+        background-color: #F5F5F5;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 5px solid #424242;
+        border: 1px solid #E0E0E0;
+    }
+    .highlight-title {
+        color: #00C853;
+        font-weight: bold;
+        font-size: 1.2rem;
+        margin-bottom: 0.5rem;
+    }
+    .highlight-value {
+        color: #000000;
+        font-weight: bold;
+        font-size: 1.4rem;
+        margin: 0.5rem 0;
+    }
+    .highlight-date {
+        color: #666666;
+        font-size: 0.9rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Header personalizado
+st.markdown("""
+<div class="main-header">
+    <h1 style='margin:0; font-size: 2.5rem;'>⏰ Controle de Ponto Automático</h1>
+    <p style='margin:0; opacity: 0.9; font-size: 1.2rem;'>Sistema inteligente de gestão de horários</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Informações sobre regras
-with st.expander("ℹ️ **REGRAS DE CÁLCULO - CLIQUE PARA VER**"):
-    st.markdown("""
-    ### 📋 Regras Aplicadas:
-    
-    **DIAS ÚTEIS (Segunda a Sexta):**
-    - ⏰ Horário esperado: 07:30 às 17:50
-    - 🍽️ Almoço: 11:30 às 13:00 (máximo 89 minutos)
-    - ⚠️ Penalidades calculadas:
-      - Atraso na entrada (após 07:30)
-      - Saída antecipada para almoço (antes das 11:30)
-      - Atraso na volta do almoço (após 13:00)
-      - Saída antecipada (antes das 17:50)
-      - Almoço excedido (mais de 89 minutos)
-    - ➕ Horas extras: Trabalho após 17:50
-    
-    **FINS DE SEMANA (Sábado e Domingo):**
-    - ✅ Todo trabalho é considerado como horas extras
-    - ❌ Não há penalidades (atrasos, etc.)
-    - ⏱️ Horas extras = Tempo total trabalhado
-    """)
-    
-    st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
+st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
 
 arquivo_carregado = st.file_uploader("Escolha seu arquivo TXT", type=["txt"])
 
@@ -289,28 +308,39 @@ if arquivo_carregado is not None:
             
             st.write("---")
 
-            # Cards informativos
-st.subheader("🎯 Destaques do Mês")
-
-# Encontrar dias com mais horas extras
-if not detalhe_diario.empty:
-    max_extra_dia = detalhe_diario.loc[detalhe_diario['Horas_Extras'].idxmax()]
-    max_faltante_dia = detalhe_diario.loc[detalhe_diario['Total_Faltante'].idxmax()]
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info(f"""
-        **📈 Melhor Dia em Horas Extras**
-        {max_extra_dia['Data_Apenas'].strftime('%d/%m')} - {max_extra_dia['Nome_Dia']}
-        **{formatar_timedelta(max_extra_dia['Horas_Extras'])}**
-        """)
-    
-    with col2:
-        st.error(f"""
-        **📉 Dia com Mais Faltas**
-        {max_faltante_dia['Data_Apenas'].strftime('%d/%m')} - {max_faltante_dia['Nome_Dia']}
-        **{formatar_timedelta(max_faltante_dia['Total_Faltante'])}**
-        """)
+            # 🎯 CARD COM DESTAQUE - TEMA VERDE, BRANCO E PRETO
+            st.subheader("🎯 Destaques do Mês")
+            
+            if not detalhe_diario.empty:
+                # Encontrar dias com mais horas extras e mais faltantes
+                max_extra_dia = detalhe_diario.loc[detalhe_diario['Horas_Extras'].idxmax()]
+                max_faltante_dia = detalhe_diario.loc[detalhe_diario['Total_Faltante'].idxmax()]
+                
+                col7, col8 = st.columns(2)
+                
+                with col7:
+                    # Card POSITIVO (verde)
+                    st.markdown(f"""
+                    <div class="positive-card">
+                        <div class="highlight-title">📈 MELHOR DIA EM HORAS EXTRAS</div>
+                        <div class="highlight-date">{max_extra_dia['Data_Apenas'].strftime('%d/%m')} - {max_extra_dia['Nome_Dia']}</div>
+                        <div class="highlight-value">{formatar_timedelta(max_extra_dia['Horas_Extras'])}</div>
+                        <div style='color: #666666; font-size: 0.8rem;'>Maior contribuição em horas extras</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col8:
+                    # Card NEGATIVO (preto/cinza)
+                    st.markdown(f"""
+                    <div class="negative-card">
+                        <div class="highlight-title">📉 DIA COM MAIS FALTAS</div>
+                        <div class="highlight-date">{max_faltante_dia['Data_Apenas'].strftime('%d/%m')} - {max_faltante_dia['Nome_Dia']}</div>
+                        <div class="highlight-value">{formatar_timedelta(max_faltante_dia['Total_Faltante'])}</div>
+                        <div style='color: #666666; font-size: 0.8rem;'>Dia com maior soma de penalidades</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            st.write("---")
 
             # Lista de Ausências
             st.subheader("🚫 Ausências (Faltas em Dias Úteis)")
