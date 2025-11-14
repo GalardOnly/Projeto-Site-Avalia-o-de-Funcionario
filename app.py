@@ -218,6 +218,19 @@ with st.expander("ℹ️ **REGRAS DE CÁLCULO - CLIQUE PARA VER**"):
     - ⏱️ Horas extras = Tempo total trabalhado
     """)
 
+# Substituir o título simples por algo mais visual
+st.markdown("""
+<div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            padding: 2rem; 
+            border-radius: 10px; 
+            text-align: center;
+            color: white;
+            margin-bottom: 2rem;'>
+    <h1 style='margin:0;'>⏰ Controle de Ponto Automático</h1>
+    <p style='margin:0; opacity: 0.9;'>Sistema inteligente de gestão de horários</p>
+</div>
+""", unsafe_allow_html=True)
+
 arquivo_carregado = st.file_uploader("Escolha seu arquivo TXT", type=["txt"])
 
 if arquivo_carregado is not None:
