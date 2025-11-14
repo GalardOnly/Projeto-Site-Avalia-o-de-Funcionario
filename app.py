@@ -276,6 +276,18 @@ if arquivo_carregado is not None:
             with col4:
                 total_dias = len(detalhe_diario)
                 st.metric(label="Total Dias Trabalhados 📅", value=total_dias)
+            
+            # Estatísticas por tipo de dia
+            dias_uteis = detalhe_diario[detalhe_diario['Tipo_Dia'] == 'Dia Útil']
+            dias_fds = detalhe_diario[detalhe_diario['Tipo_Dia'] == 'Fim de Semana']
+            
+            col5, col6 = st.columns(2)
+            with col5:
+                st.metric(label="Dias Úteis Trabalhados", value=len(dias_uteis))
+            with col6:
+                st.metric(label="Fins de Semana Trabalhados", value=len(dias_fds))
+            
+            st.write("---")
 
             # Cards informativos
 st.subheader("🎯 Destaques do Mês")
@@ -299,18 +311,6 @@ if not detalhe_diario.empty:
         {max_faltante_dia['Data_Apenas'].strftime('%d/%m')} - {max_faltante_dia['Nome_Dia']}
         **{formatar_timedelta(max_faltante_dia['Total_Faltante'])}**
         """)
-            
-            # Estatísticas por tipo de dia
-            dias_uteis = detalhe_diario[detalhe_diario['Tipo_Dia'] == 'Dia Útil']
-            dias_fds = detalhe_diario[detalhe_diario['Tipo_Dia'] == 'Fim de Semana']
-            
-            col5, col6 = st.columns(2)
-            with col5:
-                st.metric(label="Dias Úteis Trabalhados", value=len(dias_uteis))
-            with col6:
-                st.metric(label="Fins de Semana Trabalhados", value=len(dias_fds))
-            
-            st.write("---")
 
             # Lista de Ausências
             st.subheader("🚫 Ausências (Faltas em Dias Úteis)")
