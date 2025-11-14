@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 def processar_folha_ponto(arquivo_carregado):
     try:
@@ -47,22 +47,22 @@ def processar_folha_ponto(arquivo_carregado):
         # Inicializa colunas de timedelta
         zero_delta = pd.Timedelta(0)
         
-        # Converte horas para datetime
+        # Converte horas para datetime - maneira mais robusta
         for coluna in colunas_esperadas:
+            # Combina data com hora de forma segura
             mask = df_ponto[coluna].notna()
             df_ponto.loc[mask, f'{coluna}_dt'] = pd.to_datetime(
-                df_ponto.loc[mask, 'Data_Apenas'].astype(str) + ' ' + df_ponto.loc[mask, coluna].astype(str),
-                errors='coerce'
+                df_ponto.loc[mask, 'Data_Apenas'].astype(str) + ' ' + df_ponto.loc[mask, coluna].astype(str)
             )
         
-        # Horários esperados
+        # Horários esperados (apenas para dias úteis)
         df_ponto['Esperado_Entrada'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=7, minutes=30)
         df_ponto['Esperado_Saida_Almoco'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=11, minutes=30)
         df_ponto['Esperado_Volta_Almoco'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=13, minutes=0)
         df_ponto['Esperado_Saida_Casa'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=17, minutes=50)
         almoco_esperado = pd.Timedelta(minutes=89)
         
-        # Inicializa colunas de cálculo
+        # Inicializa todas as colunas de cálculo com timedelta zero
         colunas_calculo = [
             'Atraso_Entrada', 'Saida_Ant_Almoco', 'Atraso_Volta_Almoco', 
             'Saida_Ant_Casa', 'Almoco_Excedido', 'Horas_Extras', 'Total_Faltante'
@@ -71,15 +71,17 @@ def processar_folha_ponto(arquivo_carregado):
         for coluna in colunas_calculo:
             df_ponto[coluna] = zero_delta
         
-        # Função para calcular diferença positiva
+        # Cálculos para dias úteis (segunda a sexta)
+        mask_util = df_ponto['Dia_Semana'] < 5
+        
+        # Função auxiliar para calcular diferença positiva
         def calcular_diferenca_positiva(actual, esperado):
             diff = (actual - esperado).fillna(zero_delta)
+            # Garante que seja Timedelta antes de comparar
             diff = pd.to_timedelta(diff)
             return diff.where(diff > zero_delta, zero_delta)
         
         # Dias úteis
-        mask_util = df_ponto['Dia_Semana'] < 5
-        
         if mask_util.any():
             # Atraso na entrada
             df_ponto.loc[mask_util, 'Atraso_Entrada'] = calcular_diferenca_positiva(
@@ -111,13 +113,13 @@ def processar_folha_ponto(arquivo_carregado):
             almoco_excedido = pd.to_timedelta(almoco_excedido)
             df_ponto.loc[mask_util, 'Almoco_Excedido'] = almoco_excedido.where(almoco_excedido > zero_delta, zero_delta)
             
-            # Horas extras
+            # Horas extras (após o horário esperado de saída)
             df_ponto.loc[mask_util, 'Horas_Extras'] = calcular_diferenca_positiva(
                 df_ponto.loc[mask_util, 'Saida_Casa_dt'],
                 df_ponto.loc[mask_util, 'Esperado_Saida_Casa']
             )
             
-            # Total faltante
+            # Total faltante (soma de todas as penalidades)
             df_ponto.loc[mask_util, 'Total_Faltante'] = (
                 df_ponto.loc[mask_util, 'Atraso_Entrada'] + 
                 df_ponto.loc[mask_util, 'Saida_Ant_Almoco'] + 
@@ -126,46 +128,33 @@ def processar_folha_ponto(arquivo_carregado):
                 df_ponto.loc[mask_util, 'Almoco_Excedido']
             )
         
-        # Fins de semana
+        # Fins de semana (sábado e domingo) - CÁLCULO CORRIGIDO
         mask_fds = df_ponto['Dia_Semana'] >= 5
-        
         if mask_fds.any():
-            # Cenário 1: Entrada + Saída
+            # Para fins de semana, calcula horas trabalhadas totais como horas extras
+            # Considera TODOS os cenários possíveis de batidas
+            
+            # Cenário 1: Tem entrada e saída (jornada completa sem almoço ou com almoço)
             tem_entrada_saida = (
                 df_ponto.loc[mask_fds, 'Entrada_dt'].notna() & 
                 df_ponto.loc[mask_fds, 'Saida_Casa_dt'].notna()
             )
             
-            if tem_entrada_saida.any():
-                jornada_completa = (df_ponto.loc[mask_fds & tem_entrada_saida, 'Saida_Casa_dt'] - 
-                                  df_ponto.loc[mask_fds & tem_entrada_saida, 'Entrada_dt']).fillna(zero_delta)
-                df_ponto.loc[mask_fds & tem_entrada_saida, 'Horas_Extras'] = jornada_completa
-            
-            # Cenário 2: Entrada + Saída Almoço
+            # Cenário 2: Tem entrada e saída almoço (trabalhou apenas meio período)
             tem_entrada_saida_almoco = (
                 df_ponto.loc[mask_fds, 'Entrada_dt'].notna() & 
                 df_ponto.loc[mask_fds, 'Saida_Almoco_dt'].notna() &
                 df_ponto.loc[mask_fds, 'Saida_Casa_dt'].isna()
             )
             
-            if tem_entrada_saida_almoco.any():
-                meio_periodo_manha = (df_ponto.loc[mask_fds & tem_entrada_saida_almoco, 'Saida_Almoco_dt'] - 
-                                    df_ponto.loc[mask_fds & tem_entrada_saida_almoco, 'Entrada_dt']).fillna(zero_delta)
-                df_ponto.loc[mask_fds & tem_entrada_saida_almoco, 'Horas_Extras'] = meio_periodo_manha
-            
-            # Cenário 3: Volta Almoço + Saída
+            # Cenário 3: Tem volta almoço e saída (entrou antes do registro ou esqueceu de bater entrada)
             tem_volta_saida = (
                 df_ponto.loc[mask_fds, 'Volta_Almoco_dt'].notna() & 
                 df_ponto.loc[mask_fds, 'Saida_Casa_dt'].notna() &
                 df_ponto.loc[mask_fds, 'Entrada_dt'].isna()
             )
             
-            if tem_volta_saida.any():
-                meio_periodo_tarde = (df_ponto.loc[mask_fds & tem_volta_saida, 'Saida_Casa_dt'] - 
-                                    df_ponto.loc[mask_fds & tem_volta_saida, 'Volta_Almoco_dt']).fillna(zero_delta)
-                df_ponto.loc[mask_fds & tem_volta_saida, 'Horas_Extras'] = meio_periodo_tarde
-            
-            # Cenário 4: Entrada + Saída Almoço + Volta Almoço
+            # Cenário 4: Tem entrada, saída almoço e volta almoço (trabalhou manhã e parte da tarde)
             tem_entrada_almoco_volta = (
                 df_ponto.loc[mask_fds, 'Entrada_dt'].notna() & 
                 df_ponto.loc[mask_fds, 'Saida_Almoco_dt'].notna() &
@@ -173,16 +162,40 @@ def processar_folha_ponto(arquivo_carregado):
                 df_ponto.loc[mask_fds, 'Saida_Casa_dt'].isna()
             )
             
+            # Calcula horas extras para cada cenário
+            
+            # Cenário 1: Entrada → Saída (jornada completa)
+            if tem_entrada_saida.any():
+                jornada_completa = (df_ponto.loc[mask_fds & tem_entrada_saida, 'Saida_Casa_dt'] - 
+                                  df_ponto.loc[mask_fds & tem_entrada_saida, 'Entrada_dt']).fillna(zero_delta)
+                df_ponto.loc[mask_fds & tem_entrada_saida, 'Horas_Extras'] = jornada_completa
+            
+            # Cenário 2: Entrada → Saída Almoço (meio período manhã)
+            if tem_entrada_saida_almoco.any():
+                meio_periodo_manha = (df_ponto.loc[mask_fds & tem_entrada_saida_almoco, 'Saida_Almoco_dt'] - 
+                                    df_ponto.loc[mask_fds & tem_entrada_saida_almoco, 'Entrada_dt']).fillna(zero_delta)
+                df_ponto.loc[mask_fds & tem_entrada_saida_almoco, 'Horas_Extras'] = meio_periodo_manha
+            
+            # Cenário 3: Volta Almoço → Saída (meio período tarde)
+            if tem_volta_saida.any():
+                meio_periodo_tarde = (df_ponto.loc[mask_fds & tem_volta_saida, 'Saida_Casa_dt'] - 
+                                    df_ponto.loc[mask_fds & tem_volta_saida, 'Volta_Almoco_dt']).fillna(zero_delta)
+                df_ponto.loc[mask_fds & tem_volta_saida, 'Horas_Extras'] = meio_periodo_tarde
+            
+            # Cenário 4: Entrada → Saída Almoço + Volta Almoço (sem saída final)
             if tem_entrada_almoco_volta.any():
                 periodo_manha = (df_ponto.loc[mask_fds & tem_entrada_almoco_volta, 'Saida_Almoco_dt'] - 
                                df_ponto.loc[mask_fds & tem_entrada_almoco_volta, 'Entrada_dt']).fillna(zero_delta)
+                # Se não tem saída final, considera apenas o período da manhã
                 df_ponto.loc[mask_fds & tem_entrada_almoco_volta, 'Horas_Extras'] = periodo_manha
+            
+            # Para fins de semana, não há faltantes (todas as colunas de penalidade já estão zeradas)
         
-        # Arredonda resultados
+        # Arredonda os resultados
         for col in colunas_calculo:
             df_ponto[col] = pd.to_timedelta(df_ponto[col]).round('s')
         
-        # Totais por funcionário
+        # Calcula totais por funcionário
         total_mes = df_ponto.groupby('Nome')[['Total_Faltante', 'Horas_Extras']].sum()
         nomes_disponiveis = df_ponto['Nome'].unique()
         
