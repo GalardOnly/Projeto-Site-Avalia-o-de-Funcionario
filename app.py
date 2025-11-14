@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -49,11 +49,9 @@ def processar_folha_ponto(arquivo_carregado):
         # Converte horas para datetime - maneira mais robusta
         for coluna in colunas_esperadas:
             # Combina data com hora de forma segura
-            df_ponto[f'{coluna}_dt'] = df_ponto.apply(
-                lambda row: pd.to_datetime(
-                    f"{row['Data_Apenas'].strftime('%Y-%m-%d')} {row[coluna]}"
-                ) if pd.notna(row[coluna]) else pd.NaT,
-                axis=1
+            mask = df_ponto[coluna].notna()
+            df_ponto.loc[mask, f'{coluna}_dt'] = pd.to_datetime(
+                df_ponto.loc[mask, 'Data_Apenas'].astype(str) + ' ' + df_ponto.loc[mask, coluna].astype(str)
             )
         
         # Horários esperados
@@ -62,10 +60,7 @@ def processar_folha_ponto(arquivo_carregado):
         df_ponto['Esperado_Volta_Almoco'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=13, minutes=0)
         df_ponto['Esperado_Saida_Casa'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=17, minutes=50)
         
-        # Cálculos para dias úteis (segunda a sexta)
-        mask_util = df_ponto['Dia_Semana'] < 5
-        
-        # Inicializa todas as colunas de cálculo
+        # Inicializa todas as colunas de cálculo com timedelta zero
         df_ponto['Atraso_Entrada'] = zero_delta
         df_ponto['Saida_Ant_Almoco'] = zero_delta
         df_ponto['Atraso_Volta_Almoco'] = zero_delta
@@ -74,33 +69,54 @@ def processar_folha_ponto(arquivo_carregado):
         df_ponto['Horas_Extras'] = zero_delta
         df_ponto['Total_Faltante'] = zero_delta
         
+        # Cálculos para dias úteis (segunda a sexta)
+        mask_util = df_ponto['Dia_Semana'] < 5
+        
+        # Função auxiliar para calcular diferença positiva
+        def calcular_diferenca_positiva(actual, esperado):
+            diff = (actual - esperado).fillna(zero_delta)
+            # Garante que seja Timedelta antes de comparar
+            diff = pd.to_timedelta(diff)
+            return diff.where(diff > zero_delta, zero_delta)
+        
         # Dias úteis
         if mask_util.any():
-            # Atraso na entrada (substituindo clip por np.maximum)
-            atraso_entrada = (df_ponto.loc[mask_util, 'Entrada_dt'] - df_ponto.loc[mask_util, 'Esperado_Entrada']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Atraso_Entrada'] = np.maximum(atraso_entrada, zero_delta)
+            # Atraso na entrada
+            df_ponto.loc[mask_util, 'Atraso_Entrada'] = calcular_diferenca_positiva(
+                df_ponto.loc[mask_util, 'Entrada_dt'],
+                df_ponto.loc[mask_util, 'Esperado_Entrada']
+            )
             
             # Saída antecipada almoço
-            saida_ant_almoco = (df_ponto.loc[mask_util, 'Esperado_Saida_Almoco'] - df_ponto.loc[mask_util, 'Saida_Almoco_dt']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Saida_Ant_Almoco'] = np.maximum(saida_ant_almoco, zero_delta)
+            df_ponto.loc[mask_util, 'Saida_Ant_Almoco'] = calcular_diferenca_positiva(
+                df_ponto.loc[mask_util, 'Esperado_Saida_Almoco'],
+                df_ponto.loc[mask_util, 'Saida_Almoco_dt']
+            )
             
             # Atraso volta almoço
-            atraso_volta = (df_ponto.loc[mask_util, 'Volta_Almoco_dt'] - df_ponto.loc[mask_util, 'Esperado_Volta_Almoco']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Atraso_Volta_Almoco'] = np.maximum(atraso_volta, zero_delta)
+            df_ponto.loc[mask_util, 'Atraso_Volta_Almoco'] = calcular_diferenca_positiva(
+                df_ponto.loc[mask_util, 'Volta_Almoco_dt'],
+                df_ponto.loc[mask_util, 'Esperado_Volta_Almoco']
+            )
             
             # Saída antecipada
-            saida_ant_casa = (df_ponto.loc[mask_util, 'Esperado_Saida_Casa'] - df_ponto.loc[mask_util, 'Saida_Casa_dt']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Saida_Ant_Casa'] = np.maximum(saida_ant_casa, zero_delta)
+            df_ponto.loc[mask_util, 'Saida_Ant_Casa'] = calcular_diferenca_positiva(
+                df_ponto.loc[mask_util, 'Esperado_Saida_Casa'],
+                df_ponto.loc[mask_util, 'Saida_Casa_dt']
+            )
             
             # Almoço excedido
             almoco_real = (df_ponto.loc[mask_util, 'Volta_Almoco_dt'] - df_ponto.loc[mask_util, 'Saida_Almoco_dt']).fillna(zero_delta)
             almoco_esperado = pd.Timedelta(minutes=89)
             almoco_excedido = (almoco_real - almoco_esperado).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Almoco_Excedido'] = np.maximum(almoco_excedido, zero_delta)
+            almoco_excedido = pd.to_timedelta(almoco_excedido)
+            df_ponto.loc[mask_util, 'Almoco_Excedido'] = almoco_excedido.where(almoco_excedido > zero_delta, zero_delta)
             
             # Horas extras
-            horas_extras = (df_ponto.loc[mask_util, 'Saida_Casa_dt'] - df_ponto.loc[mask_util, 'Esperado_Saida_Casa']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Horas_Extras'] = np.maximum(horas_extras, zero_delta)
+            df_ponto.loc[mask_util, 'Horas_Extras'] = calcular_diferenca_positiva(
+                df_ponto.loc[mask_util, 'Saida_Casa_dt'],
+                df_ponto.loc[mask_util, 'Esperado_Saida_Casa']
+            )
             
             # Total faltante
             df_ponto.loc[mask_util, 'Total_Faltante'] = (
