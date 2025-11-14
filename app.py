@@ -6,7 +6,7 @@ from datetime import datetime
 
 def formatar_timedelta(td):
     """Formata Timedelta para mostrar horas totais (mesmo acima de 24h)"""
-    if pd.isna(td):
+    if pd.isna(td) or td == pd.NaT:
         return "00:00:00"
     
     total_seconds = int(td.total_seconds())
@@ -138,7 +138,7 @@ def processar_folha_ponto(arquivo_carregado):
                 df_ponto.loc[mask_util, 'Almoco_Excedido']
             )
         
-        # Fins de semana
+        # Fins de semana - CÁLCULO COMPLETAMENTE REVISADO E SIMPLIFICADO
         mask_fds = df_ponto['Dia_Semana'] >= 5
         
         if mask_fds.any():
@@ -150,28 +150,27 @@ def processar_folha_ponto(arquivo_carregado):
                 
                 horas_trabalhadas = zero_delta
                 
-                # Cenário 1: Entrada + Saída Almoço (meio período manhã)
-                if pd.notna(entrada) and pd.notna(saida_almoco) and pd.isna(volta_almoco) and pd.isna(saida_casa):
-                    horas_trabalhadas = saida_almoco - entrada
+                # VERIFICAÇÃO DE DADOS VÁLIDOS
+                batidas_validas = []
+                if pd.notna(entrada):
+                    batidas_validas.append(entrada)
+                if pd.notna(saida_almoco):
+                    batidas_validas.append(saida_almoco)
+                if pd.notna(volta_almoco):
+                    batidas_validas.append(volta_almoco)
+                if pd.notna(saida_casa):
+                    batidas_validas.append(saida_casa)
                 
-                # Cenário 2: Entrada + Saída (jornada completa sem almoço)
-                elif pd.notna(entrada) and pd.isna(saida_almoco) and pd.isna(volta_almoco) and pd.notna(saida_casa):
-                    horas_trabalhadas = saida_casa - entrada
+                # Só calcula se tiver pelo menos 2 batidas válidas
+                if len(batidas_validas) >= 2:
+                    # Calcula do primeiro ao último horário válido
+                    primeiro_horario = min(batidas_validas)
+                    ultimo_horario = max(batidas_validas)
+                    horas_trabalhadas = ultimo_horario - primeiro_horario
                 
-                # Cenário 3: Entrada + Saída Almoço + Volta Almoço + Saída (jornada completa com almoço)
-                elif pd.notna(entrada) and pd.notna(saida_almoco) and pd.notna(volta_almoco) and pd.notna(saida_casa):
-                    horas_manha = saida_almoco - entrada
-                    horas_tarde = saida_casa - volta_almoco
-                    horas_trabalhadas = horas_manha + horas_tarde
-                
-                # Cenário 4: Volta Almoço + Saída (meio período tarde)
-                elif pd.isna(entrada) and pd.isna(saida_almoco) and pd.notna(volta_almoco) and pd.notna(saida_casa):
-                    horas_trabalhadas = saida_casa - volta_almoco
-                
-                # Cenário 5: Entrada + Saída Almoço + Volta Almoço (sem saída final)
-                elif pd.notna(entrada) and pd.notna(saida_almoco) and pd.notna(volta_almoco) and pd.isna(saida_casa):
-                    horas_manha = saida_almoco - entrada
-                    horas_trabalhadas = horas_manha
+                # LIMITE MÁXIMO RAZOÁVEL: 12 horas por dia
+                if horas_trabalhadas > pd.Timedelta(hours=12):
+                    horas_trabalhadas = pd.Timedelta(hours=12)
                 
                 # Garante que não seja negativo
                 if horas_trabalhadas > zero_delta:
@@ -233,6 +232,15 @@ if arquivo_carregado is not None:
             totais_por_tipo = df_ponto.groupby('Tipo_Dia')['Horas_Extras'].sum()
             for tipo, total in totais_por_tipo.items():
                 st.write(f"{tipo}: {formatar_timedelta(total)}")
+            
+            # DEBUG ADICIONAL: Mostrar estatísticas dos fins de semana
+            fds_df = df_ponto[df_ponto['Tipo_Dia'] == 'Fim de Semana']
+            st.write(f"**Estatísticas Fins de Semana:**")
+            st.write(f"- Total de dias: {len(fds_df)}")
+            if len(fds_df) > 0:
+                st.write(f"- Média de horas por dia: {formatar_timedelta(fds_df['Horas_Extras'].mean())}")
+                st.write(f"- Máximo de horas em um dia: {formatar_timedelta(fds_df['Horas_Extras'].max())}")
+                st.write(f"- Mínimo de horas em um dia: {formatar_timedelta(fds_df['Horas_Extras'].min())}")
 
         nome_escolhido = st.selectbox(
             "Selecione o funcionário para ver os detalhes:",
@@ -261,11 +269,9 @@ if arquivo_carregado is not None:
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                # CORREÇÃO CRÍTICA: Usar a nova função de formatação
                 faltante_str = formatar_timedelta(resumo_funcionario['Total_Faltante'])
                 st.metric(label="Total Horas Faltantes 🔻", value=faltante_str)
             with col2:
-                # CORREÇÃO CRÍTICA: Usar a nova função de formatação
                 extras_str = formatar_timedelta(resumo_funcionario['Horas_Extras'])
                 st.metric(label="Total Horas Extras 🔺", value=extras_str)
             with col3:
@@ -318,7 +324,7 @@ if arquivo_carregado is not None:
                     lambda x: x.strftime('%H:%M:%S') if pd.notna(x) else '-'
                 )
             
-            # CORREÇÃO: Usar a nova função de formatação para colunas timedelta
+            # Usar a nova função de formatação para colunas timedelta
             for col in ['Total_Faltante', 'Horas_Extras', 'Atraso_Entrada', 'Saida_Ant_Almoco',
                        'Atraso_Volta_Almoco', 'Saida_Ant_Casa', 'Almoco_Excedido']:
                 detalhe_exibicao[col] = detalhe_exibicao[col].apply(formatar_timedelta)
