@@ -193,8 +193,6 @@ def processar_folha_ponto(arquivo_carregado):
 # Interface Streamlit
 st.set_page_config(layout="wide", page_title="Calculadora de Ponto", page_icon="⏰")
 
-st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
-
 # Substituir o título simples por algo mais visual
 st.markdown("""
 <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
@@ -207,8 +205,6 @@ st.markdown("""
     <p style='margin:0; opacity: 0.9;'>Sistema inteligente de gestão de horários</p>
 </div>
 """, unsafe_allow_html=True)
-
-st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
 
 # Informações sobre regras
 with st.expander("ℹ️ **REGRAS DE CÁLCULO - CLIQUE PARA VER**"):
@@ -231,6 +227,8 @@ with st.expander("ℹ️ **REGRAS DE CÁLCULO - CLIQUE PARA VER**"):
     - ❌ Não há penalidades (atrasos, etc.)
     - ⏱️ Horas extras = Tempo total trabalhado
     """)
+    
+    st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
 
 arquivo_carregado = st.file_uploader("Escolha seu arquivo TXT", type=["txt"])
 
@@ -278,6 +276,29 @@ if arquivo_carregado is not None:
             with col4:
                 total_dias = len(detalhe_diario)
                 st.metric(label="Total Dias Trabalhados 📅", value=total_dias)
+
+            # Cards informativos
+st.subheader("🎯 Destaques do Mês")
+
+# Encontrar dias com mais horas extras
+if not detalhe_diario.empty:
+    max_extra_dia = detalhe_diario.loc[detalhe_diario['Horas_Extras'].idxmax()]
+    max_faltante_dia = detalhe_diario.loc[detalhe_diario['Total_Faltante'].idxmax()]
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info(f"""
+        **📈 Melhor Dia em Horas Extras**
+        {max_extra_dia['Data_Apenas'].strftime('%d/%m')} - {max_extra_dia['Nome_Dia']}
+        **{formatar_timedelta(max_extra_dia['Horas_Extras'])}**
+        """)
+    
+    with col2:
+        st.error(f"""
+        **📉 Dia com Mais Faltas**
+        {max_faltante_dia['Data_Apenas'].strftime('%d/%m')} - {max_faltante_dia['Nome_Dia']}
+        **{formatar_timedelta(max_faltante_dia['Total_Faltante'])}**
+        """)
             
             # Estatísticas por tipo de dia
             dias_uteis = detalhe_diario[detalhe_diario['Tipo_Dia'] == 'Dia Útil']
