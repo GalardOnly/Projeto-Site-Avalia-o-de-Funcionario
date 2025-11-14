@@ -1,105 +1,165 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import io
+from datetime import datetime
 
 def processar_folha_ponto(arquivo_carregado):
+    try:
+        # Lê o arquivo
+        df = pd.read_csv(arquivo_carregado, sep='\t', encoding='utf-8')
+        
+        # Processamento Inicial
+        df['Tempo'] = pd.to_datetime(df['Tempo'], errors='coerce')
+        df = df.dropna(subset=['Tempo'])
+        df['Data_Apenas'] = df['Tempo'].dt.date
+        df = df.sort_values(by=['Tra. No.', 'Data_Apenas', 'Tempo'])
+        
+        # Identifica as batidas
+        df['Batida_Num'] = df.groupby(['Tra. No.', 'Data_Apenas']).cumcount()
+        df['Hora'] = df['Tempo'].dt.time
+        
+        # Mapeia as batidas
+        mapa_batidas = {0: 'Entrada', 1: 'Saida_Almoco', 2: 'Volta_Almoco', 3: 'Saida_Casa'}
+        df['Tipo_Batida'] = df['Batida_Num'].map(mapa_batidas)
+        
+        # Cria pivot table
+        df_ponto = df.pivot_table(
+            index=['Tra. No.', 'Nome', 'Data_Apenas'],
+            columns='Tipo_Batida', 
+            values='Hora', 
+            aggfunc='first'
+        ).reset_index()
+        
+        df_ponto.columns.name = None
+        
+        # Garante que todas as colunas esperadas existam
+        colunas_esperadas = ['Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa']
+        for coluna in colunas_esperadas:
+            if coluna not in df_ponto.columns:
+                df_ponto[coluna] = pd.NaT
+        
+        # Processa datas e horas
+        df_ponto['Data_Apenas'] = pd.to_datetime(df_ponto['Data_Apenas'])
+        df_ponto['Dia_Semana'] = df_ponto['Data_Apenas'].dt.dayofweek
+        
+        # Inicializa colunas de timedelta
+        zero_delta = pd.Timedelta(0)
+        
+        # Converte horas para datetime
+        for coluna in colunas_esperadas:
+            df_ponto[f'{coluna}_dt'] = pd.to_datetime(
+                df_ponto['Data_Apenas'].astype(str) + ' ' + df_ponto[coluna].astype(str),
+                errors='coerce'
+            )
+        
+        # Horários esperados
+        df_ponto['Esperado_Entrada'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=7, minutes=30)
+        df_ponto['Esperado_Saida_Almoco'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=11, minutes=30)
+        df_ponto['Esperado_Volta_Almoco'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=13, minutes=0)
+        df_ponto['Esperado_Saida_Casa'] = df_ponto['Data_Apenas'] + pd.Timedelta(hours=17, minutes=50)
+        
+        # Cálculos para dias úteis (segunda a sexta)
+        mask_util = df_ponto['Dia_Semana'] < 5
+        
+        # Inicializa todas as colunas de cálculo
+        df_ponto['Atraso_Entrada'] = zero_delta
+        df_ponto['Saida_Ant_Almoco'] = zero_delta
+        df_ponto['Atraso_Volta_Almoco'] = zero_delta
+        df_ponto['Saida_Ant_Casa'] = zero_delta
+        df_ponto['Almoco_Excedido'] = zero_delta
+        df_ponto['Horas_Extras'] = zero_delta
+        df_ponto['Total_Faltante'] = zero_delta
+        
+        # Dias úteis
+        if mask_util.any():
+            util_df = df_ponto[mask_util]
+            
+            # Atraso na entrada
+            atraso_entrada = (util_df['Entrada_dt'] - util_df['Esperado_Entrada']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Atraso_Entrada'] = atraso_entrada.clip(lower=zero_delta)
+            
+            # Saída antecipada almoço
+            saida_ant_almoco = (util_df['Esperado_Saida_Almoco'] - util_df['Saida_Almoco_dt']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Saida_Ant_Almoco'] = saida_ant_almoco.clip(lower=zero_delta)
+            
+            # Atraso volta almoço
+            atraso_volta = (util_df['Volta_Almoco_dt'] - util_df['Esperado_Volta_Almoco']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Atraso_Volta_Almoco'] = atraso_volta.clip(lower=zero_delta)
+            
+            # Saída antecipada
+            saida_ant_casa = (util_df['Esperado_Saida_Casa'] - util_df['Saida_Casa_dt']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Saida_Ant_Casa'] = saida_ant_casa.clip(lower=zero_delta)
+            
+            # Almoço excedido
+            almoco_real = (util_df['Volta_Almoco_dt'] - util_df['Saida_Almoco_dt']).fillna(zero_delta)
+            almoco_esperado = pd.Timedelta(minutes=89)
+            almoco_excedido = (almoco_real - almoco_esperado).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Almoco_Excedido'] = almoco_excedido.clip(lower=zero_delta)
+            
+            # Horas extras
+            horas_extras = (util_df['Saida_Casa_dt'] - util_df['Esperado_Saida_Casa']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Horas_Extras'] = horas_extras.clip(lower=zero_delta)
+            
+            # Total faltante
+            df_ponto.loc[mask_util, 'Total_Faltante'] = (
+                df_ponto.loc[mask_util, 'Atraso_Entrada'] + 
+                df_ponto.loc[mask_util, 'Saida_Ant_Almoco'] + 
+                df_ponto.loc[mask_util, 'Atraso_Volta_Almoco'] + 
+                df_ponto.loc[mask_util, 'Saida_Ant_Casa'] + 
+                df_ponto.loc[mask_util, 'Almoco_Excedido']
+            )
+        
+        # Fins de semana (sábado e domingo)
+        mask_fds = df_ponto['Dia_Semana'] >= 5
+        if mask_fds.any():
+            fds_df = df_ponto[mask_fds]
+            
+            # Para fins de semana, calcula horas trabalhadas totais
+            jornada_total = pd.Timedelta(0)
+            
+            # Se tem todas as 4 batidas
+            completo_mask = (
+                fds_df['Entrada_dt'].notna() & 
+                fds_df['Saida_Almoco_dt'].notna() & 
+                fds_df['Volta_Almoco_dt'].notna() & 
+                fds_df['Saida_Casa_dt'].notna()
+            )
+            
+            if completo_mask.any():
+                manha = (fds_df.loc[completo_mask, 'Saida_Almoco_dt'] - fds_df.loc[completo_mask, 'Entrada_dt']).fillna(zero_delta)
+                tarde = (fds_df.loc[completo_mask, 'Saida_Casa_dt'] - fds_df.loc[completo_mask, 'Volta_Almoco_dt']).fillna(zero_delta)
+                jornada_total = manha + tarde
+            
+            # Se tem apenas entrada e saída (sem almoço)
+            simples_mask = (
+                fds_df['Entrada_dt'].notna() & 
+                fds_df['Saida_Casa_dt'].notna() & 
+                (~fds_df['Saida_Almoco_dt'].notna() | ~fds_df['Volta_Almoco_dt'].notna())
+            )
+            
+            if simples_mask.any():
+                jornada_direta = (fds_df.loc[simples_mask, 'Saida_Casa_dt'] - fds_df.loc[simples_mask, 'Entrada_dt']).fillna(zero_delta)
+                df_ponto.loc[simples_mask, 'Horas_Extras'] = jornada_direta
+            
+            df_ponto.loc[mask_fds, 'Horas_Extras'] = jornada_total.clip(lower=zero_delta)
+        
+        # Arredonda os resultados
+        for col in ['Atraso_Entrada', 'Saida_Ant_Almoco', 'Atraso_Volta_Almoco', 
+                   'Saida_Ant_Casa', 'Almoco_Excedido', 'Horas_Extras', 'Total_Faltante']:
+            df_ponto[col] = df_ponto[col].dt.round('s')
+        
+        # Calcula totais por funcionário
+        total_mes = df_ponto.groupby('Nome')[['Total_Faltante', 'Horas_Extras']].sum()
+        nomes_disponiveis = df_ponto['Nome'].unique()
+        
+        return df_ponto, total_mes, nomes_disponiveis
+        
+    except Exception as e:
+        st.error(f"Erro no processamento: {str(e)}")
+        raise
 
-    # Lê o arquivo
-    df = pd.read_csv(arquivo_carregado, sep='\t')
-
-    #  Processamento Inicial (do seu código original)
-    df['Tempo'] = pd.to_datetime(df['Tempo'])
-    df['Data_Apenas'] = df['Tempo'].dt.date
-    df = df.sort_values(by=['Tra. No.', 'Data_Apenas', 'Tempo'])
-    df['Batida_Num'] = df.groupby(['Tra. No.', 'Data_Apenas']).cumcount()
-    df['Hora'] = df['Tempo'].dt.time
-    mapa_batidas = {
-        0: 'Entrada', 1: 'Saida_Almoco', 2: 'Volta_Almoco', 3: 'Saida_Casa'
-    }
-    df['Tipo_Batida'] = df['Batida_Num'].map(mapa_batidas)
-    df_ponto = df.pivot_table(
-        index=['Tra. No.', 'Nome', 'Data_Apenas'],
-        columns='Tipo_Batida', values='Hora', aggfunc='first'
-    )
-    df_ponto = df_ponto.reset_index()
-    df_ponto.columns.name = None
-    colunas_finais = ['Tra. No.', 'Nome', 'Data_Apenas', 'Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa']
-    colunas_existentes = [coluna for coluna in colunas_finais if coluna in df_ponto.columns]
-    df_ponto = df_ponto[colunas_existentes]
-
-    # Conversão para Timestamps (Essencial para o cálculo)
-    df_ponto['Data_Apenas'] = pd.to_datetime(df_ponto['Data_Apenas'])
-    ts_entrada = pd.to_datetime(df_ponto['Data_Apenas'].astype(str) + ' ' + df_ponto['Entrada'].astype(str), errors='coerce')
-    ts_saida_almoco = pd.to_datetime(df_ponto['Data_Apenas'].astype(str) + ' ' + df_ponto['Saida_Almoco'].astype(str), errors='coerce')
-    ts_volta_almoco = pd.to_datetime(df_ponto['Data_Apenas'].astype(str) + ' ' + df_ponto['Volta_Almoco'].astype(str), errors='coerce')
-    ts_saida_casa = pd.to_datetime(df_ponto['Data_Apenas'].astype(str) + ' ' + df_ponto['Saida_Casa'].astype(str), errors='coerce')
-
-    # Definição das Regras de Horário
-    esperado_entrada = df_ponto['Data_Apenas'] + pd.to_timedelta('07:30:00')
-    esperado_saida_almoco = df_ponto['Data_Apenas'] + pd.to_timedelta('11:30:00')
-    esperado_volta_almoco = df_ponto['Data_Apenas'] + pd.to_timedelta('13:00:00')
-    esperado_saida_casa = df_ponto['Data_Apenas'] + pd.to_timedelta('17:50:00')
-    almoco_esperado_delta = pd.to_timedelta('89 minutes') # Sua regra de 89 min
-    zero_delta = pd.Timedelta(0)
-
-    # LÓGICA DE CÁLCULO v3 (COM SEPARAÇÃO DE FDS)
-
-    df_ponto['Dia_Semana'] = df_ponto['Data_Apenas'].dt.dayofweek
-
-    # Lógica de DIAS DE SEMANA (Seg-Sex)
-    atraso_entrada = (ts_entrada - esperado_entrada).fillna(zero_delta).clip(lower=zero_delta)
-    saida_ant_almoco = (esperado_saida_almoco - ts_saida_almoco).fillna(zero_delta).clip(lower=zero_delta)
-    atraso_volta_almoco = (ts_volta_almoco - esperado_volta_almoco).fillna(zero_delta).clip(lower=zero_delta)
-    saida_ant_casa = (esperado_saida_casa - ts_saida_casa).fillna(zero_delta).clip(lower=zero_delta)
-    almoco_real_delta_semana = (ts_volta_almoco - ts_saida_almoco).fillna(zero_delta)
-    almoco_excedido = (almoco_real_delta_semana - almoco_esperado_delta).fillna(zero_delta).clip(lower=zero_delta)
-
-    faltante_semana = atraso_entrada + saida_ant_almoco + atraso_volta_almoco + saida_ant_casa + almoco_excedido
-    extra_semana = (ts_saida_casa - esperado_saida_casa).fillna(zero_delta).clip(lower=zero_delta)
-
-    # Lógica de FIM DE SEMANA (Sáb/Dom)
-    # Garantir que todos sejam Timedelta
-    faltante_fds = zero_delta
-    penalidade_zero_fds = zero_delta
-
-    # Extra no FDS é o TEMPO TOTAL (Manhã + Tarde)
-    duracao_manha = (ts_saida_almoco - ts_entrada).fillna(zero_delta).clip(lower=zero_delta)
-    duracao_tarde = (ts_saida_casa - ts_volta_almoco).fillna(zero_delta).clip(lower=zero_delta)
-    # Se só bateu entrada e saída (sem almoço), calcula a jornada direta
-    jornada_direta = (ts_saida_casa - ts_entrada).fillna(zero_delta).clip(lower=zero_delta)
-    # Se não houver almoço, usa a jornada direta. Se houver, soma manha+tarde.
-    extra_fds = np.where(duracao_manha + duracao_tarde > zero_delta, duracao_manha + duracao_tarde, jornada_direta)
-
-    # Aplicar a Lógica (Usando np.where)
-    eh_fds = (df_ponto['Dia_Semana'] >= 5) # True se Sábado (5) ou Domingo (6)
-
-    df_ponto['Total_Faltante_Diario'] = np.where(eh_fds, faltante_fds, faltante_semana)
-    df_ponto['Total_Extra_Diario'] = np.where(eh_fds, extra_fds, extra_semana)
-
-    # Salva as 5 colunas de penalidades (zeradas no FDS)
-    df_ponto['P1_Atraso_Entrada'] = np.where(eh_fds, penalidade_zero_fds, atraso_entrada)
-    df_ponto['P2_Saida_Ant_Almoco'] = np.where(eh_fds, penalidade_zero_fds, saida_ant_almoco)
-    df_ponto['P3_Atraso_Volta_Almoco'] = np.where(eh_fds, penalidade_zero_fds, atraso_volta_almoco)
-    df_ponto['P4_Saida_Ant_Casa'] = np.where(eh_fds, penalidade_zero_fds, saida_ant_casa)
-    df_ponto['P5_Almoco_Excedido'] = np.where(eh_fds, penalidade_zero_fds, almoco_excedido)
-
-    # FIM DA LÓGICA DE CÁLCULO
-
-    # Renomeia colunas Delta (para a tabela)
-    df_ponto['Horas_Faltantes_Delta'] = df_ponto['Total_Faltante_Diario']
-    df_ponto['Horas_Extras_Delta'] = df_ponto['Total_Extra_Diario']
-
-    # Calcula o total do mês
-    total_mes = df_ponto.groupby('Nome')[['Horas_Faltantes_Delta', 'Horas_Extras_Delta']].sum()
-    total_mes = total_mes.apply(lambda x: x.dt.round('s'))
-
-    nomes_disponiveis = df_ponto['Nome'].unique()
-
-    # Retorna tudo que a interface precisa
-    return df_ponto, total_mes, nomes_disponiveis
-
-# A "INTERFACE" (O que o usuário vê)
+# Interface Streamlit
 st.set_page_config(layout="wide", page_title="Calculadora de Ponto", page_icon="⏰")
 
 st.title("🤖 Controle de Horário de Trabalho Automático")
@@ -108,7 +168,6 @@ st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os
 arquivo_carregado = st.file_uploader("Escolha seu arquivo TXT", type=["txt"])
 
 if arquivo_carregado is not None:
-
     try:
         with st.spinner('Processando seu arquivo...'):
             df_ponto, total_mes, nomes_disponiveis = processar_folha_ponto(arquivo_carregado)
@@ -121,29 +180,33 @@ if arquivo_carregado is not None:
         )
 
         if nome_escolhido:
-
-            #Bloco de Cálculo das Ausências (Necessário para o Dashboard)
-            detalhe_diario = df_ponto[df_ponto['Nome'] == nome_escolhido]
+            # Filtra dados do funcionário
+            detalhe_diario = df_ponto[df_ponto['Nome'] == nome_escolhido].copy()
+            
+            # Calcula ausências
             datas_presente = pd.to_datetime(detalhe_diario['Data_Apenas']).dt.date.unique()
-            dias_ausente = [] # Inicializa lista
+            dias_ausente = []
+            
             if len(datas_presente) > 0:
-                primeiro_dia = datas_presente.min()
-                ultimo_dia = datas_presente.max()
+                primeiro_dia = pd.to_datetime(min(datas_presente))
+                ultimo_dia = pd.to_datetime(max(datas_presente))
                 todos_dias = pd.date_range(start=primeiro_dia, end=ultimo_dia, freq='D')
-                dias_uteis_esperados = todos_dias[todos_dias.dayofweek < 5].date
+                dias_uteis_esperados = [dia for dia in todos_dias if dia.dayofweek < 5]
                 set_presente = set(datas_presente)
-                dias_ausente = [dia for dia in dias_uteis_esperados if dia not in set_presente]
+                dias_ausente = [dia for dia in dias_uteis_esperados if dia.date() not in set_presente]
 
-            #Dashboard (Ideia 1)
+            # Dashboard
             resumo_funcionario = total_mes.loc[nome_escolhido]
             st.subheader(f"Dashboard de Resumo: {nome_escolhido.upper()}")
+            
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric(label="Total Horas Faltantes 🔻", value=str(resumo_funcionario['Horas_Faltantes_Delta']))
+                st.metric(label="Total Horas Faltantes 🔻", value=str(resumo_funcionario['Total_Faltante']))
             with col2:
-                st.metric(label="Total Horas Extras 🔺", value=str(resumo_funcionario['Horas_Extras_Delta']))
+                st.metric(label="Total Horas Extras 🔺", value=str(resumo_funcionario['Horas_Extras']))
             with col3:
                 st.metric(label="Dias com Ausência (Faltas) 🚫", value=len(dias_ausente))
+            
             st.write("---")
 
             # Lista de Ausências
@@ -154,50 +217,53 @@ if arquivo_carregado is not None:
                 for dia_falta in dias_ausente:
                     st.warning(f"- {dia_falta.strftime('%Y-%m-%d (%A)')}")
 
-            # Detalhe Diário (com as 5 Penalidades)
-            st.subheader(f"🗓️ Detalhe Diário (com Penalidades): {nome_escolhido.upper()}")
-
-            # Define TODAS as colunas que queremos mostrar
-            colunas_detalhe = [
+            # Detalhe Diário
+            st.subheader(f"🗓️ Detalhe Diário: {nome_escolhido.upper()}")
+            
+            # Prepara dados para exibição
+            colunas_exibir = [
                 'Data_Apenas', 'Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa',
-                'Horas_Faltantes_Delta', 'Horas_Extras_Delta',
-                'P1_Atraso_Entrada', 'P2_Saida_Ant_Almoco', 'P3_Atraso_Volta_Almoco',
-                'P4_Saida_Ant_Casa', 'P5_Almoco_Excedido'
+                'Total_Faltante', 'Horas_Extras', 'Atraso_Entrada', 'Saida_Ant_Almoco',
+                'Atraso_Volta_Almoco', 'Saida_Ant_Casa', 'Almoco_Excedido'
             ]
+            
+            detalhe_exibicao = detalhe_diario[colunas_exibir].copy()
+            detalhe_exibicao['Data_Apenas'] = detalhe_exibicao['Data_Apenas'].dt.strftime('%Y-%m-%d')
+            
+            # Formata colunas de tempo
+            for col in ['Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa']:
+                detalhe_exibicao[col] = detalhe_exibicao[col].apply(
+                    lambda x: x.strftime('%H:%M:%S') if pd.notna(x) else '-'
+                )
+            
+            # Renomeia colunas
+            detalhe_exibicao.columns = [
+                'Data', 'Entrada', 'Saída Almoço', 'Volta Almoço', 'Saída',
+                'Total Faltante', 'Total Extra', 'Atraso Entrada', 'Saída Ant. Almoço',
+                'Atraso Volta', 'Saída Ant.', 'Almoço Excedido'
+            ]
+            
+            st.dataframe(detalhe_exibicao, use_container_width=True)
 
-            # Filtra o dataframe
-            detalhe_diario_filtrado = detalhe_diario[colunas_detalhe]
-
-            # Formata e renomeia
-            detalhe_diario_formatado = detalhe_diario_filtrado \
-                                        .set_index('Data_Apenas') \
-                                        .apply(lambda x: x.dt.round('s') if ('Delta' in x.name or 'P' in x.name) else x)
-
-            detalhe_diario_formatado.rename(columns={
-                'Horas_Faltantes_Delta': 'TOTAL FALTANTE',
-                'Horas_Extras_Delta': 'TOTAL EXTRA',
-                'P1_Atraso_Entrada': 'Penal: Atraso',
-                'P2_Saida_Ant_Almoco': 'Penal: Saída Almoço',
-                'P3_Atraso_Volta_Almoco': 'Penal: Volta Almoço',
-                'P4_Saida_Ant_Casa': 'Penal: Saída Casa',
-                'P5_Almoco_Excedido': 'Penal: Almoço Exc.'
-            }, inplace=True)
-
-            st.dataframe(detalhe_diario_formatado)
-
-            #Botões de Download
+            # Botões de Download
             st.subheader("Baixar Relatórios")
-            csv_completo = df_ponto.to_csv(index=False).encode('utf-8')
+            
+            csv_completo = df_ponto.to_csv(index=False, encoding='utf-8')
             st.download_button(
-               label="Baixar Relatório Geral (CSV)",
-               data=csv_completo, file_name="relatorio_completo_ponto.csv", mime='text/csv',
+                label="Baixar Relatório Geral (CSV)",
+                data=csv_completo,
+                file_name="relatorio_completo_ponto.csv",
+                mime='text/csv',
             )
-            csv_detalhe = detalhe_diario_formatado.to_csv().encode('utf-8')
+            
+            csv_detalhe = detalhe_exibicao.to_csv(index=False, encoding='utf-8')
             st.download_button(
-               label=f"Baixar Detalhe - {nome_escolhido} (CSV)",
-               data=csv_detalhe, file_name=f"detalhe_{nome_escolhido}.csv", mime='text/csv',
+                label=f"Baixar Detalhe - {nome_escolhido} (CSV)",
+                data=csv_detalhe,
+                file_name=f"detalhe_{nome_escolhido}.csv",
+                mime='text/csv',
             )
 
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
-        st.error("Verifique se o arquivo TXT está no formato correto. Se o erro persistir, cheque os 'Logs' no 'Manage app'.")
+        st.error("Verifique se o arquivo TXT está no formato correto.")
