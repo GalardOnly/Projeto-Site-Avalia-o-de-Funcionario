@@ -193,7 +193,21 @@ def processar_folha_ponto(arquivo_carregado):
 # Interface Streamlit
 st.set_page_config(layout="wide", page_title="Calculadora de Ponto", page_icon="⏰")
 
-st.title("🤖 Controle de Horário de Trabalho Automático")
+st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
+
+# Substituir o título simples por algo mais visual
+st.markdown("""
+<div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            padding: 2rem; 
+            border-radius: 10px; 
+            text-align: center;
+            color: white;
+            margin-bottom: 2rem;'>
+    <h1 style='margin:0;'>⏰ Controle de Ponto Automático</h1>
+    <p style='margin:0; opacity: 0.9;'>Sistema inteligente de gestão de horários</p>
+</div>
+""", unsafe_allow_html=True)
+
 st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
 
 # Informações sobre regras
@@ -217,19 +231,6 @@ with st.expander("ℹ️ **REGRAS DE CÁLCULO - CLIQUE PARA VER**"):
     - ❌ Não há penalidades (atrasos, etc.)
     - ⏱️ Horas extras = Tempo total trabalhado
     """)
-
-# Substituir o título simples por algo mais visual
-st.markdown("""
-<div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            padding: 2rem; 
-            border-radius: 10px; 
-            text-align: center;
-            color: white;
-            margin-bottom: 2rem;'>
-    <h1 style='margin:0;'>⏰ Controle de Ponto Automático</h1>
-    <p style='margin:0; opacity: 0.9;'>Sistema inteligente de gestão de horários</p>
-</div>
-""", unsafe_allow_html=True)
 
 arquivo_carregado = st.file_uploader("Escolha seu arquivo TXT", type=["txt"])
 
