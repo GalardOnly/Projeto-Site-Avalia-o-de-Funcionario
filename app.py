@@ -1,4 +1,4 @@
-
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -46,11 +46,14 @@ def processar_folha_ponto(arquivo_carregado):
         # Inicializa colunas de timedelta
         zero_delta = pd.Timedelta(0)
         
-        # Converte horas para datetime
+        # Converte horas para datetime - maneira mais robusta
         for coluna in colunas_esperadas:
-            df_ponto[f'{coluna}_dt'] = pd.to_datetime(
-                df_ponto['Data_Apenas'].astype(str) + ' ' + df_ponto[coluna].astype(str),
-                errors='coerce'
+            # Combina data com hora de forma segura
+            df_ponto[f'{coluna}_dt'] = df_ponto.apply(
+                lambda row: pd.to_datetime(
+                    f"{row['Data_Apenas'].strftime('%Y-%m-%d')} {row[coluna]}"
+                ) if pd.notna(row[coluna]) else pd.NaT,
+                axis=1
             )
         
         # Horários esperados
@@ -73,33 +76,31 @@ def processar_folha_ponto(arquivo_carregado):
         
         # Dias úteis
         if mask_util.any():
-            util_df = df_ponto[mask_util]
-            
-            # Atraso na entrada
-            atraso_entrada = (util_df['Entrada_dt'] - util_df['Esperado_Entrada']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Atraso_Entrada'] = atraso_entrada.clip(lower=zero_delta)
+            # Atraso na entrada (substituindo clip por np.maximum)
+            atraso_entrada = (df_ponto.loc[mask_util, 'Entrada_dt'] - df_ponto.loc[mask_util, 'Esperado_Entrada']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Atraso_Entrada'] = np.maximum(atraso_entrada, zero_delta)
             
             # Saída antecipada almoço
-            saida_ant_almoco = (util_df['Esperado_Saida_Almoco'] - util_df['Saida_Almoco_dt']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Saida_Ant_Almoco'] = saida_ant_almoco.clip(lower=zero_delta)
+            saida_ant_almoco = (df_ponto.loc[mask_util, 'Esperado_Saida_Almoco'] - df_ponto.loc[mask_util, 'Saida_Almoco_dt']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Saida_Ant_Almoco'] = np.maximum(saida_ant_almoco, zero_delta)
             
             # Atraso volta almoço
-            atraso_volta = (util_df['Volta_Almoco_dt'] - util_df['Esperado_Volta_Almoco']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Atraso_Volta_Almoco'] = atraso_volta.clip(lower=zero_delta)
+            atraso_volta = (df_ponto.loc[mask_util, 'Volta_Almoco_dt'] - df_ponto.loc[mask_util, 'Esperado_Volta_Almoco']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Atraso_Volta_Almoco'] = np.maximum(atraso_volta, zero_delta)
             
             # Saída antecipada
-            saida_ant_casa = (util_df['Esperado_Saida_Casa'] - util_df['Saida_Casa_dt']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Saida_Ant_Casa'] = saida_ant_casa.clip(lower=zero_delta)
+            saida_ant_casa = (df_ponto.loc[mask_util, 'Esperado_Saida_Casa'] - df_ponto.loc[mask_util, 'Saida_Casa_dt']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Saida_Ant_Casa'] = np.maximum(saida_ant_casa, zero_delta)
             
             # Almoço excedido
-            almoco_real = (util_df['Volta_Almoco_dt'] - util_df['Saida_Almoco_dt']).fillna(zero_delta)
+            almoco_real = (df_ponto.loc[mask_util, 'Volta_Almoco_dt'] - df_ponto.loc[mask_util, 'Saida_Almoco_dt']).fillna(zero_delta)
             almoco_esperado = pd.Timedelta(minutes=89)
             almoco_excedido = (almoco_real - almoco_esperado).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Almoco_Excedido'] = almoco_excedido.clip(lower=zero_delta)
+            df_ponto.loc[mask_util, 'Almoco_Excedido'] = np.maximum(almoco_excedido, zero_delta)
             
             # Horas extras
-            horas_extras = (util_df['Saida_Casa_dt'] - util_df['Esperado_Saida_Casa']).fillna(zero_delta)
-            df_ponto.loc[mask_util, 'Horas_Extras'] = horas_extras.clip(lower=zero_delta)
+            horas_extras = (df_ponto.loc[mask_util, 'Saida_Casa_dt'] - df_ponto.loc[mask_util, 'Esperado_Saida_Casa']).fillna(zero_delta)
+            df_ponto.loc[mask_util, 'Horas_Extras'] = np.maximum(horas_extras, zero_delta)
             
             # Total faltante
             df_ponto.loc[mask_util, 'Total_Faltante'] = (
@@ -113,41 +114,24 @@ def processar_folha_ponto(arquivo_carregado):
         # Fins de semana (sábado e domingo)
         mask_fds = df_ponto['Dia_Semana'] >= 5
         if mask_fds.any():
-            fds_df = df_ponto[mask_fds]
-            
-            # Para fins de semana, calcula horas trabalhadas totais
-            jornada_total = pd.Timedelta(0)
-            
-            # Se tem todas as 4 batidas
-            completo_mask = (
-                fds_df['Entrada_dt'].notna() & 
-                fds_df['Saida_Almoco_dt'].notna() & 
-                fds_df['Volta_Almoco_dt'].notna() & 
-                fds_df['Saida_Casa_dt'].notna()
+            # Para fins de semana, calcula horas trabalhadas totais como horas extras
+            tem_entrada_saida = (
+                df_ponto.loc[mask_fds, 'Entrada_dt'].notna() & 
+                df_ponto.loc[mask_fds, 'Saida_Casa_dt'].notna()
             )
             
-            if completo_mask.any():
-                manha = (fds_df.loc[completo_mask, 'Saida_Almoco_dt'] - fds_df.loc[completo_mask, 'Entrada_dt']).fillna(zero_delta)
-                tarde = (fds_df.loc[completo_mask, 'Saida_Casa_dt'] - fds_df.loc[completo_mask, 'Volta_Almoco_dt']).fillna(zero_delta)
-                jornada_total = manha + tarde
+            # Calcula jornada total
+            jornada_total = (df_ponto.loc[mask_fds & tem_entrada_saida, 'Saida_Casa_dt'] - 
+                           df_ponto.loc[mask_fds & tem_entrada_saida, 'Entrada_dt']).fillna(zero_delta)
             
-            # Se tem apenas entrada e saída (sem almoço)
-            simples_mask = (
-                fds_df['Entrada_dt'].notna() & 
-                fds_df['Saida_Casa_dt'].notna() & 
-                (~fds_df['Saida_Almoco_dt'].notna() | ~fds_df['Volta_Almoco_dt'].notna())
-            )
-            
-            if simples_mask.any():
-                jornada_direta = (fds_df.loc[simples_mask, 'Saida_Casa_dt'] - fds_df.loc[simples_mask, 'Entrada_dt']).fillna(zero_delta)
-                df_ponto.loc[simples_mask, 'Horas_Extras'] = jornada_direta
-            
-            df_ponto.loc[mask_fds, 'Horas_Extras'] = jornada_total.clip(lower=zero_delta)
+            df_ponto.loc[mask_fds & tem_entrada_saida, 'Horas_Extras'] = jornada_total
         
         # Arredonda os resultados
-        for col in ['Atraso_Entrada', 'Saida_Ant_Almoco', 'Atraso_Volta_Almoco', 
-                   'Saida_Ant_Casa', 'Almoco_Excedido', 'Horas_Extras', 'Total_Faltante']:
-            df_ponto[col] = df_ponto[col].dt.round('s')
+        colunas_timedelta = ['Atraso_Entrada', 'Saida_Ant_Almoco', 'Atraso_Volta_Almoco', 
+                           'Saida_Ant_Casa', 'Almoco_Excedido', 'Horas_Extras', 'Total_Faltante']
+        
+        for col in colunas_timedelta:
+            df_ponto[col] = pd.to_timedelta(df_ponto[col]).round('s')
         
         # Calcula totais por funcionário
         total_mes = df_ponto.groupby('Nome')[['Total_Faltante', 'Horas_Extras']].sum()
@@ -201,9 +185,11 @@ if arquivo_carregado is not None:
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric(label="Total Horas Faltantes 🔻", value=str(resumo_funcionario['Total_Faltante']))
+                faltante_str = str(resumo_funcionario['Total_Faltante']).split()[-1]
+                st.metric(label="Total Horas Faltantes 🔻", value=faltante_str)
             with col2:
-                st.metric(label="Total Horas Extras 🔺", value=str(resumo_funcionario['Horas_Extras']))
+                extras_str = str(resumo_funcionario['Horas_Extras']).split()[-1]
+                st.metric(label="Total Horas Extras 🔺", value=extras_str)
             with col3:
                 st.metric(label="Dias com Ausência (Faltas) 🚫", value=len(dias_ausente))
             
@@ -236,6 +222,13 @@ if arquivo_carregado is not None:
                     lambda x: x.strftime('%H:%M:%S') if pd.notna(x) else '-'
                 )
             
+            # Formata colunas timedelta
+            for col in ['Total_Faltante', 'Horas_Extras', 'Atraso_Entrada', 'Saida_Ant_Almoco',
+                       'Atraso_Volta_Almoco', 'Saida_Ant_Casa', 'Almoco_Excedido']:
+                detalhe_exibicao[col] = detalhe_exibicao[col].apply(
+                    lambda x: str(x).split()[-1] if pd.notna(x) and str(x) != '0 days 00:00:00' else '00:00:00'
+                )
+            
             # Renomeia colunas
             detalhe_exibicao.columns = [
                 'Data', 'Entrada', 'Saída Almoço', 'Volta Almoço', 'Saída',
@@ -248,7 +241,20 @@ if arquivo_carregado is not None:
             # Botões de Download
             st.subheader("Baixar Relatórios")
             
-            csv_completo = df_ponto.to_csv(index=False, encoding='utf-8')
+            # Prepara CSV para download
+            df_download = df_ponto.copy()
+            for col in ['Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa']:
+                df_download[col] = df_download[col].apply(
+                    lambda x: x.strftime('%H:%M:%S') if pd.notna(x) else ''
+                )
+            
+            for col in ['Total_Faltante', 'Horas_Extras', 'Atraso_Entrada', 'Saida_Ant_Almoco',
+                       'Atraso_Volta_Almoco', 'Saida_Ant_Casa', 'Almoco_Excedido']:
+                df_download[col] = df_download[col].apply(
+                    lambda x: str(x) if pd.notna(x) else ''
+                )
+            
+            csv_completo = df_download.to_csv(index=False, encoding='utf-8')
             st.download_button(
                 label="Baixar Relatório Geral (CSV)",
                 data=csv_completo,
@@ -266,4 +272,5 @@ if arquivo_carregado is not None:
 
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
-        st.error("Verifique se o arquivo TXT está no formato correto.")
+        import traceback
+        st.error(f"Detalhes do erro: {traceback.format_exc()}")
