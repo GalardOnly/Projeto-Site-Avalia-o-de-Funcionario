@@ -4,6 +4,17 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
+def formatar_timedelta(td):
+    """Formata Timedelta para mostrar horas totais (mesmo acima de 24h)"""
+    if pd.isna(td):
+        return "00:00:00"
+    
+    total_seconds = int(td.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
 def processar_folha_ponto(arquivo_carregado):
     try:
         # Lê o arquivo
@@ -127,7 +138,7 @@ def processar_folha_ponto(arquivo_carregado):
                 df_ponto.loc[mask_util, 'Almoco_Excedido']
             )
         
-        # Fins de semana - CÁLCULO COMPLETAMENTE REVISADO
+        # Fins de semana
         mask_fds = df_ponto['Dia_Semana'] >= 5
         
         if mask_fds.any():
@@ -139,50 +150,34 @@ def processar_folha_ponto(arquivo_carregado):
                 
                 horas_trabalhadas = zero_delta
                 
-                # DEBUG: Mostrar os valores para verificação
-                debug_info = f"Data: {df_ponto.loc[idx, 'Data_Apenas']}, "
-                debug_info += f"Entrada: {entrada}, Saída Almoço: {saida_almoco}, "
-                debug_info += f"Volta Almoço: {volta_almoco}, Saída: {saida_casa}"
-                
                 # Cenário 1: Entrada + Saída Almoço (meio período manhã)
                 if pd.notna(entrada) and pd.notna(saida_almoco) and pd.isna(volta_almoco) and pd.isna(saida_casa):
                     horas_trabalhadas = saida_almoco - entrada
-                    debug_info += f" -> Cenário 1: {horas_trabalhadas}"
                 
                 # Cenário 2: Entrada + Saída (jornada completa sem almoço)
                 elif pd.notna(entrada) and pd.isna(saida_almoco) and pd.isna(volta_almoco) and pd.notna(saida_casa):
                     horas_trabalhadas = saida_casa - entrada
-                    debug_info += f" -> Cenário 2: {horas_trabalhadas}"
                 
                 # Cenário 3: Entrada + Saída Almoço + Volta Almoço + Saída (jornada completa com almoço)
                 elif pd.notna(entrada) and pd.notna(saida_almoco) and pd.notna(volta_almoco) and pd.notna(saida_casa):
                     horas_manha = saida_almoco - entrada
                     horas_tarde = saida_casa - volta_almoco
                     horas_trabalhadas = horas_manha + horas_tarde
-                    debug_info += f" -> Cenário 3: {horas_trabalhadas} (manhã: {horas_manha}, tarde: {horas_tarde})"
                 
                 # Cenário 4: Volta Almoço + Saída (meio período tarde)
                 elif pd.isna(entrada) and pd.isna(saida_almoco) and pd.notna(volta_almoco) and pd.notna(saida_casa):
                     horas_trabalhadas = saida_casa - volta_almoco
-                    debug_info += f" -> Cenário 4: {horas_trabalhadas}"
                 
                 # Cenário 5: Entrada + Saída Almoço + Volta Almoço (sem saída final)
                 elif pd.notna(entrada) and pd.notna(saida_almoco) and pd.notna(volta_almoco) and pd.isna(saida_casa):
                     horas_manha = saida_almoco - entrada
                     horas_trabalhadas = horas_manha
-                    debug_info += f" -> Cenário 5: {horas_trabalhadas}"
                 
                 # Garante que não seja negativo
                 if horas_trabalhadas > zero_delta:
                     df_ponto.loc[idx, 'Horas_Extras'] = horas_trabalhadas
-                    debug_info += f" -> Horas Extras: {horas_trabalhadas}"
-                else:
-                    debug_info += f" -> Horas Extras: 0"
-                
-                # Adiciona debug info ao dataframe para verificação
-                df_ponto.loc[idx, 'Debug_Info'] = debug_info
         
-        # CORREÇÃO CRÍTICA: Converter explicitamente para timedelta antes de somar
+        # Converter explicitamente para timedelta
         for col in ['Horas_Extras', 'Total_Faltante']:
             df_ponto[col] = pd.to_timedelta(df_ponto[col])
         
@@ -190,7 +185,7 @@ def processar_folha_ponto(arquivo_carregado):
         for col in colunas_calculo:
             df_ponto[col] = df_ponto[col].round('s')
         
-        # CORREÇÃO: Soma correta das horas extras - converter para segundos, somar, e converter de volta
+        # CORREÇÃO: Soma correta das horas extras
         def soma_timedeltas(series):
             total_segundos = series.dt.total_seconds().sum()
             return pd.Timedelta(seconds=total_segundos)
@@ -228,13 +223,16 @@ if arquivo_carregado is not None:
             st.write("Horas extras por dia (apenas primeiras linhas):")
             debug_df = df_ponto[['Data_Apenas', 'Nome_Dia', 'Tipo_Dia', 'Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa', 'Horas_Extras']].copy()
             debug_df['Data_Apenas'] = debug_df['Data_Apenas'].dt.strftime('%Y-%m-%d')
-            debug_df['Horas_Extras'] = debug_df['Horas_Extras'].apply(lambda x: str(x).split()[-1] if pd.notna(x) and str(x) != '0 days 00:00:00' else '00:00:00')
-            st.dataframe(debug_df.head(20))
+            
+            # Usar a nova função de formatação
+            debug_df['Horas_Extras_Formatado'] = debug_df['Horas_Extras'].apply(formatar_timedelta)
+            st.dataframe(debug_df[['Data_Apenas', 'Nome_Dia', 'Tipo_Dia', 'Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa', 'Horas_Extras_Formatado']].head(20))
             
             # Mostrar totais por tipo de dia
             st.write("**Totais por tipo de dia:**")
             totais_por_tipo = df_ponto.groupby('Tipo_Dia')['Horas_Extras'].sum()
-            st.write(totais_por_tipo)
+            for tipo, total in totais_por_tipo.items():
+                st.write(f"{tipo}: {formatar_timedelta(total)}")
 
         nome_escolhido = st.selectbox(
             "Selecione o funcionário para ver os detalhes:",
@@ -263,10 +261,12 @@ if arquivo_carregado is not None:
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                faltante_str = str(resumo_funcionario['Total_Faltante']).split()[-1]
+                # CORREÇÃO CRÍTICA: Usar a nova função de formatação
+                faltante_str = formatar_timedelta(resumo_funcionario['Total_Faltante'])
                 st.metric(label="Total Horas Faltantes 🔻", value=faltante_str)
             with col2:
-                extras_str = str(resumo_funcionario['Horas_Extras']).split()[-1]
+                # CORREÇÃO CRÍTICA: Usar a nova função de formatação
+                extras_str = formatar_timedelta(resumo_funcionario['Horas_Extras'])
                 st.metric(label="Total Horas Extras 🔺", value=extras_str)
             with col3:
                 st.metric(label="Dias com Ausência (Faltas) 🚫", value=len(dias_ausente))
@@ -286,7 +286,7 @@ if arquivo_carregado is not None:
             
             # DEBUG: Mostrar soma manual das horas extras
             total_horas_extras_manual = detalhe_diario['Horas_Extras'].sum()
-            st.write(f"**Verificação:** Soma manual das horas extras: {str(total_horas_extras_manual).split()[-1]}")
+            st.write(f"**Verificação:** Soma manual das horas extras: {formatar_timedelta(total_horas_extras_manual)}")
             
             st.write("---")
 
@@ -318,12 +318,10 @@ if arquivo_carregado is not None:
                     lambda x: x.strftime('%H:%M:%S') if pd.notna(x) else '-'
                 )
             
-            # Formata colunas timedelta
+            # CORREÇÃO: Usar a nova função de formatação para colunas timedelta
             for col in ['Total_Faltante', 'Horas_Extras', 'Atraso_Entrada', 'Saida_Ant_Almoco',
                        'Atraso_Volta_Almoco', 'Saida_Ant_Casa', 'Almoco_Excedido']:
-                detalhe_exibicao[col] = detalhe_exibicao[col].apply(
-                    lambda x: str(x).split()[-1] if pd.notna(x) and str(x) != '0 days 00:00:00' else '00:00:00'
-                )
+                detalhe_exibicao[col] = detalhe_exibicao[col].apply(formatar_timedelta)
             
             # Renomeia colunas
             detalhe_exibicao.columns = [
@@ -346,9 +344,7 @@ if arquivo_carregado is not None:
             
             for col in ['Total_Faltante', 'Horas_Extras', 'Atraso_Entrada', 'Saida_Ant_Almoco',
                        'Atraso_Volta_Almoco', 'Saida_Ant_Casa', 'Almoco_Excedido']:
-                df_download[col] = df_download[col].apply(
-                    lambda x: str(x) if pd.notna(x) else ''
-                )
+                df_download[col] = df_download[col].apply(formatar_timedelta)
             
             csv_completo = df_download.to_csv(index=False, encoding='utf-8')
             st.download_button(
