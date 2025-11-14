@@ -167,6 +167,24 @@ if arquivo_carregado is not None:
                                         .set_index('Data_Apenas') \
                                         .apply(lambda x: x.round('s') if ('Delta' in x.name or 'P' in x.name) else x)
 
+            
+    
+            detalhe_diario_formatado = detalhe_diario_filtrado.set_index('Data_Apenas')
+            
+            # 2. Define quais colunas de tempo queremos arredondar
+            colunas_para_arredondar = [
+                'Horas_Faltantes_Delta', 'Horas_Extras_Delta',
+                'P1_Atraso_Entrada', 'P2_Saida_Ant_Almoco', 'P3_Atraso_Volta_Almoco', 
+                'P4_Saida_Ant_Casa', 'P5_Almoco_Excedido'
+            ]
+            
+            # 3. Arredonda cada coluna de Timedelta (sem .dt)
+            # Isso evita o erro 'AttributeError'
+            for col in colunas_para_arredondar:
+                if col in detalhe_diario_formatado.columns: # Checa se a coluna existe
+                    detalhe_diario_formatado[col] = detalhe_diario_formatado[col].round('s')
+
+            # 4. Renomeia as colunas para exibição
             detalhe_diario_formatado.rename(columns={
                 'Horas_Faltantes_Delta': 'TOTAL FALTANTE',
                 'Horas_Extras_Delta': 'TOTAL EXTRA',
@@ -176,8 +194,10 @@ if arquivo_carregado is not None:
                 'P4_Saida_Ant_Casa': 'Penal: Saída Casa',
                 'P5_Almoco_Excedido': 'Penal: Almoço Exc.'
             }, inplace=True)
-
+            
+            # 5. Exibe o DataFrame final
             st.dataframe(detalhe_diario_formatado)
+            
 
             #Botões de Download
             st.subheader("Baixar Relatórios")
