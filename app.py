@@ -1,7 +1,8 @@
-
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 def processar_folha_ponto(arquivo_carregado):
     try:
@@ -111,7 +112,7 @@ def processar_folha_ponto(arquivo_carregado):
             almoco_excedido = pd.to_timedelta(almoco_excedido)
             df_ponto.loc[mask_util, 'Almoco_Excedido'] = almoco_excedido.where(almoco_excedido > zero_delta, zero_delta)
             
-            # Horas extras
+            # Horas extras (após o horário esperado de saída)
             df_ponto.loc[mask_util, 'Horas_Extras'] = calcular_diferenca_positiva(
                 df_ponto.loc[mask_util, 'Saida_Casa_dt'],
                 df_ponto.loc[mask_util, 'Esperado_Saida_Casa']
@@ -126,11 +127,10 @@ def processar_folha_ponto(arquivo_carregado):
                 df_ponto.loc[mask_util, 'Almoco_Excedido']
             )
         
-        # Fins de semana - CÁLCULO CORRIGIDO
+        # Fins de semana - CÁLCULO COMPLETAMENTE REVISADO
         mask_fds = df_ponto['Dia_Semana'] >= 5
         
         if mask_fds.any():
-            # Para cada linha de fim de semana, calcula o tempo trabalhado
             for idx in df_ponto[mask_fds].index:
                 entrada = df_ponto.loc[idx, 'Entrada_dt']
                 saida_almoco = df_ponto.loc[idx, 'Saida_Almoco_dt']
@@ -139,49 +139,65 @@ def processar_folha_ponto(arquivo_carregado):
                 
                 horas_trabalhadas = zero_delta
                 
-                # Cenário 1: Tem todas as 4 batidas
-                if (pd.notna(entrada) and pd.notna(saida_almoco) and 
-                    pd.notna(volta_almoco) and pd.notna(saida_casa)):
+                # DEBUG: Mostrar os valores para verificação
+                debug_info = f"Data: {df_ponto.loc[idx, 'Data_Apenas']}, "
+                debug_info += f"Entrada: {entrada}, Saída Almoço: {saida_almoco}, "
+                debug_info += f"Volta Almoço: {volta_almoco}, Saída: {saida_casa}"
+                
+                # Cenário 1: Entrada + Saída Almoço (meio período manhã)
+                if pd.notna(entrada) and pd.notna(saida_almoco) and pd.isna(volta_almoco) and pd.isna(saida_casa):
+                    horas_trabalhadas = saida_almoco - entrada
+                    debug_info += f" -> Cenário 1: {horas_trabalhadas}"
+                
+                # Cenário 2: Entrada + Saída (jornada completa sem almoço)
+                elif pd.notna(entrada) and pd.isna(saida_almoco) and pd.isna(volta_almoco) and pd.notna(saida_casa):
+                    horas_trabalhadas = saida_casa - entrada
+                    debug_info += f" -> Cenário 2: {horas_trabalhadas}"
+                
+                # Cenário 3: Entrada + Saída Almoço + Volta Almoço + Saída (jornada completa com almoço)
+                elif pd.notna(entrada) and pd.notna(saida_almoco) and pd.notna(volta_almoco) and pd.notna(saida_casa):
                     horas_manha = saida_almoco - entrada
                     horas_tarde = saida_casa - volta_almoco
                     horas_trabalhadas = horas_manha + horas_tarde
+                    debug_info += f" -> Cenário 3: {horas_trabalhadas} (manhã: {horas_manha}, tarde: {horas_tarde})"
                 
-                # Cenário 2: Tem entrada e saída (jornada direta)
-                elif pd.notna(entrada) and pd.notna(saida_casa):
-                    horas_trabalhadas = saida_casa - entrada
-                
-                # Cenário 3: Tem entrada e saída almoço (meio período manhã)
-                elif pd.notna(entrada) and pd.notna(saida_almoco):
-                    horas_trabalhadas = saida_almoco - entrada
-                
-                # Cenário 4: Tem volta almoço e saída (meio período tarde)
-                elif pd.notna(volta_almoco) and pd.notna(saida_casa):
+                # Cenário 4: Volta Almoço + Saída (meio período tarde)
+                elif pd.isna(entrada) and pd.isna(saida_almoco) and pd.notna(volta_almoco) and pd.notna(saida_casa):
                     horas_trabalhadas = saida_casa - volta_almoco
+                    debug_info += f" -> Cenário 4: {horas_trabalhadas}"
                 
-                # Cenário 5: Tem entrada, saída almoço e volta almoço (sem saída)
-                elif (pd.notna(entrada) and pd.notna(saida_almoco) and 
-                      pd.notna(volta_almoco)):
+                # Cenário 5: Entrada + Saída Almoço + Volta Almoço (sem saída final)
+                elif pd.notna(entrada) and pd.notna(saida_almoco) and pd.notna(volta_almoco) and pd.isna(saida_casa):
                     horas_manha = saida_almoco - entrada
-                    # Considera apenas o período da manhã
                     horas_trabalhadas = horas_manha
+                    debug_info += f" -> Cenário 5: {horas_trabalhadas}"
                 
                 # Garante que não seja negativo
                 if horas_trabalhadas > zero_delta:
                     df_ponto.loc[idx, 'Horas_Extras'] = horas_trabalhadas
+                    debug_info += f" -> Horas Extras: {horas_trabalhadas}"
+                else:
+                    debug_info += f" -> Horas Extras: 0"
+                
+                # Adiciona debug info ao dataframe para verificação
+                df_ponto.loc[idx, 'Debug_Info'] = debug_info
+        
+        # CORREÇÃO CRÍTICA: Converter explicitamente para timedelta antes de somar
+        for col in ['Horas_Extras', 'Total_Faltante']:
+            df_ponto[col] = pd.to_timedelta(df_ponto[col])
         
         # Arredonda resultados
         for col in colunas_calculo:
-            df_ponto[col] = pd.to_timedelta(df_ponto[col]).round('s')
+            df_ponto[col] = df_ponto[col].round('s')
         
-        # CORREÇÃO CRÍTICA: Garantir que todas as colunas de timedelta sejam do tipo correto
-        for col in ['Total_Faltante', 'Horas_Extras']:
-            df_ponto[col] = pd.to_timedelta(df_ponto[col])
+        # CORREÇÃO: Soma correta das horas extras - converter para segundos, somar, e converter de volta
+        def soma_timedeltas(series):
+            total_segundos = series.dt.total_seconds().sum()
+            return pd.Timedelta(seconds=total_segundos)
         
-        # Calcula totais por funcionário - FORMA CORRIGIDA
-        # Converter para segundos, somar e converter de volta para timedelta
         total_mes = df_ponto.groupby('Nome').agg({
-            'Total_Faltante': lambda x: pd.to_timedelta(x.sum()),
-            'Horas_Extras': lambda x: pd.to_timedelta(x.sum())
+            'Total_Faltante': soma_timedeltas,
+            'Horas_Extras': soma_timedeltas
         })
         
         nomes_disponiveis = df_ponto['Nome'].unique()
@@ -192,36 +208,11 @@ def processar_folha_ponto(arquivo_carregado):
         st.error(f"Erro no processamento: {str(e)}")
         raise
 
-# O resto do código da interface permanece igual...
-# [A interface Streamlit continua exatamente como antes]
-
 # Interface Streamlit
 st.set_page_config(layout="wide", page_title="Calculadora de Ponto", page_icon="⏰")
 
 st.title("🤖 Controle de Horário de Trabalho Automático")
 st.write("Faça o upload do arquivo TXT (Registo de comparec.) para processar os dados.")
-
-# Informações sobre regras
-with st.expander("ℹ️ **REGRAS DE CÁLCULO - CLIQUE PARA VER**"):
-    st.markdown("""
-    ### 📋 Regras Aplicadas:
-    
-    **DIAS ÚTEIS (Segunda a Sexta):**
-    - ⏰ Horário esperado: 07:30 às 17:50
-    - 🍽️ Almoço: 11:30 às 13:00 (máximo 89 minutos)
-    - ⚠️ Penalidades calculadas:
-      - Atraso na entrada (após 07:30)
-      - Saída antecipada para almoço (antes das 11:30)
-      - Atraso na volta do almoço (após 13:00)
-      - Saída antecipada (antes das 17:50)
-      - Almoço excedido (mais de 89 minutos)
-    - ➕ Horas extras: Trabalho após 17:50
-    
-    **FINS DE SEMANA (Sábado e Domingo):**
-    - ✅ Todo trabalho é considerado como horas extras
-    - ❌ Não há penalidades (atrasos, etc.)
-    - ⏱️ Horas extras = Tempo total trabalhado
-    """)
 
 arquivo_carregado = st.file_uploader("Escolha seu arquivo TXT", type=["txt"])
 
@@ -231,6 +222,19 @@ if arquivo_carregado is not None:
             df_ponto, total_mes, nomes_disponiveis = processar_folha_ponto(arquivo_carregado)
 
         st.success('Arquivo processado com sucesso!')
+
+        # DEBUG: Mostrar totais por dia para verificação
+        with st.expander("🔍 Debug: Verificar cálculo de horas extras por dia"):
+            st.write("Horas extras por dia (apenas primeiras linhas):")
+            debug_df = df_ponto[['Data_Apenas', 'Nome_Dia', 'Tipo_Dia', 'Entrada', 'Saida_Almoco', 'Volta_Almoco', 'Saida_Casa', 'Horas_Extras']].copy()
+            debug_df['Data_Apenas'] = debug_df['Data_Apenas'].dt.strftime('%Y-%m-%d')
+            debug_df['Horas_Extras'] = debug_df['Horas_Extras'].apply(lambda x: str(x).split()[-1] if pd.notna(x) and str(x) != '0 days 00:00:00' else '00:00:00')
+            st.dataframe(debug_df.head(20))
+            
+            # Mostrar totais por tipo de dia
+            st.write("**Totais por tipo de dia:**")
+            totais_por_tipo = df_ponto.groupby('Tipo_Dia')['Horas_Extras'].sum()
+            st.write(totais_por_tipo)
 
         nome_escolhido = st.selectbox(
             "Selecione o funcionário para ver os detalhes:",
@@ -279,6 +283,10 @@ if arquivo_carregado is not None:
                 st.metric(label="Dias Úteis Trabalhados", value=len(dias_uteis))
             with col6:
                 st.metric(label="Fins de Semana Trabalhados", value=len(dias_fds))
+            
+            # DEBUG: Mostrar soma manual das horas extras
+            total_horas_extras_manual = detalhe_diario['Horas_Extras'].sum()
+            st.write(f"**Verificação:** Soma manual das horas extras: {str(total_horas_extras_manual).split()[-1]}")
             
             st.write("---")
 
