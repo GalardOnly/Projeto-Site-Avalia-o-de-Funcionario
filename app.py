@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -191,6 +191,9 @@ def processar_folha_ponto(arquivo_carregado):
     except Exception as e:
         st.error(f"Erro no processamento: {str(e)}")
         raise
+
+# O resto do código da interface permanece igual...
+# [A interface Streamlit continua exatamente como antes]
 
 # Interface Streamlit
 st.set_page_config(layout="wide", page_title="Calculadora de Ponto", page_icon="⏰")
