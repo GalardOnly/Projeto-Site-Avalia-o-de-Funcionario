@@ -1,10 +1,10 @@
-# ⏰ Projeto: Avaliação de Funcionário (Controle de Ponto)
+#  Projeto: Avaliação de Funcionário (Controle de Ponto)
 
 Este projeto é uma aplicação web interativa desenvolvida para automatizar a análise de folhas de ponto e controle de jornada de trabalho.
 
 Através do upload de arquivos de registro (formato `.txt`), o sistema processa os dados, aplica regras de negócios (horários esperados, tolerâncias) e gera relatórios detalhados sobre horas extras, atrasos e ausências.
 
-## 🚀 Funcionalidades
+##  Funcionalidades
 
 * **Processamento de Arquivos:** Leitura e tratamento de arquivos de ponto brutos (Tab-separated values).
 * **Cálculo Automático de Jornada:**
@@ -17,7 +17,7 @@ Através do upload de arquivos de registro (formato `.txt`), o sistema processa 
     * Detecção automática de dias de ausência (Faltas).
 * **Relatórios Exportáveis:** Download das tabelas processadas e resumos individuais em formato CSV.
 
-## 🛠️ Tecnologias Utilizadas
+##  Tecnologias Utilizadas
 
 * **Linguagem:** Python
 * **Interface Web:** [Streamlit](https://streamlit.io/)
@@ -28,7 +28,7 @@ Através do upload de arquivos de registro (formato `.txt`), o sistema processa 
 * `app.py`: Código principal da aplicação contendo a lógica de processamento (`processar_folha_ponto`) e a interface Streamlit.
 * `Requeriments.txt`: Lista de dependências do projeto.
 
-## 📦 Como Executar o Projeto
+##  Como Executar o Projeto
 
 Siga os passos abaixo para rodar a aplicação na sua máquina local:
 
@@ -58,7 +58,7 @@ Siga os passos abaixo para rodar a aplicação na sua máquina local:
 5.  **Acesse no navegador:**
     O terminal irá mostrar um link local, geralmente: `http://localhost:8501`
 
-## 📊 Regras de Negócio Implementadas
+##  Regras de Negócio Implementadas
 
 O algoritmo considera os seguintes horários para cálculo de penalidades e extras:
 * **Entrada:** 07:30
@@ -66,7 +66,7 @@ O algoritmo considera os seguintes horários para cálculo de penalidades e extr
 * **Volta Almoço:** 13:00 (Duração esperada: 1h30m / Tolerância aplicada no código: 89 min)
 * **Saída:** 17:50
 
-## 🤝 Autores
+##  Autores
 
 * **GalardOnly** - *Desenvolvimento Full Stack*
 
